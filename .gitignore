@@ -1,7 +1,3 @@
-build/
-dist/
-Makefile
-
 # Recommended for mplab x projects
 *.d
 *.pre
