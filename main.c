@@ -11,6 +11,7 @@
 #include "timers.h"
 #include "adc.h"
 #include "pwm.h"
+#include "util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,20 +63,21 @@ int main(int argc, char** argv) {
     
     init_gpio();
     init_timers();
-    init_adc();
+    //init_adc();
     init_pwm();
     
     // Enable peripheral interrupts
     INTCONbits.PEIE = 1;
     // Enable global interrupts
-    INTCONbits.GIE = 1;
+    enable_global_interrupts();
     
     // Start an ADC conversion to start the scan of pots
-    start_adc_conversion();
+    //start_adc_conversion();
     
     while (1) {
         // Have the LED driver output enable mirror the mode switch
-        LATCbits.LATC0 = PORTBbits.RB2;
+        //LATCbits.LATC0 = PORTBbits.RB2;
+        LATCbits.LATC0 = 1;
         
         if (adc_result_updated) {
             float new_hue = ((float)adc_result / 4096.0) * 360.0;
@@ -104,6 +106,7 @@ volatile unsigned int breathe_counter = 0;
 volatile unsigned int hue_breathe_counter = 0;
 volatile BreatheState current_breathe_state = BREATHE_STATE_SAT_DOWN;
 volatile HueBreatheDirection current_hue_breathe_direction = HUE_BREATHE_UP;
+volatile unsigned int hue_test_counter = 0;
 
 /*
  * ISR
@@ -184,10 +187,22 @@ void interrupt main_isr(void)
             breathe_counter = 0;
         }
         
+        // TODO: Just for testing until IMU is working
+        if (hue_test_counter++ > 2) {
+            adc_result++;
+            if (adc_result > 4096) {
+                adc_result = 0;
+            }
+            hue_test_counter = 0;
+            
+            adc_result_updated = true;
+        }
+        
         // Reset the interrupt flag
         INTCONbits.TMR0IF = 0;
     }
     
+    /*
     if (PIR1bits.ADIF) { // ADC conversion complete flag
         // Read the adc
         adc_result = (ADRESH << 8) | ADRESL;
@@ -206,6 +221,7 @@ void interrupt main_isr(void)
         // Schedule a new ADC conversion
         start_adc_conversion();
     }
+    */
     
     return;
 }
