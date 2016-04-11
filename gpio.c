@@ -13,12 +13,9 @@ void init_gpio()
     PORTB = 0;
     PORTC = 0;
     
-    // Init test line
-    TRISCbits.TRISC0 = 0; // Output
+    // Init PWM enable
+    PWM_ENABLE_DIRECTION = 0; // Output
     
     // Init User LED Gpio
-    TRISBbits.TRISB1 = 0; // Output
-    
-    // Init mode switch input
-    TRISBbits.TRISB2 = 1; // Input
+    USER_LED_DIRECTION = 0; // Output
 }

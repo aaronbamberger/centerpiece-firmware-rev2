@@ -5,6 +5,8 @@
  * Created on March 25, 2016, 4:24 PM
  */
 
+#define _XTAL_FREQ 16000000
+
 #include "proc_config.h"
 #include "rgb_hsv.h"
 #include "gpio.h"
@@ -12,6 +14,8 @@
 #include "adc.h"
 #include "pwm.h"
 #include "util.h"
+#include "spi.h"
+#include "mpu6500.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,14 +35,7 @@
 #define HUE_BREATHE_ADJ_MIN -10.0
 #define BREATHE_DELAY 3
 #define HUE_BREATHE_DELAY 5
-
-volatile bool update_color_flag = false;
-float hsv[] = {0.0, 1.0, 1.0};
-float rgb_out[] = {0.0, 0.0, 0.0};
-uint16_t pwm_out[] = {0, 0, 0};
-volatile uint16_t adc_result;
-volatile bool adc_result_updated = false;
-volatile float hue_breathe_adjustment = 0.0;
+#define GYRO_MOTION_THRESHOLD 230
 
 typedef enum {
     BREATHE_STATE_SAT_DOWN,
@@ -51,6 +48,23 @@ typedef enum {
     HUE_BREATHE_UP,
     HUE_BREATHE_DOWN
 } HueBreatheDirection;
+
+typedef enum {
+    GYRO_READ_HIGH,
+    GYRO_READ_LOW
+} GyroReadPart;
+
+volatile bool update_color_flag = false;
+float hsv[] = {0.0, 1.0, 1.0};
+float rgb_out[] = {0.0, 0.0, 0.0};
+uint16_t pwm_out[] = {0, 0, 0};
+volatile uint16_t adc_result;
+volatile bool adc_result_updated = false;
+volatile float hue_breathe_adjustment = 0.0;
+volatile bool new_gyro_samp_ready = false;
+volatile GyroReadPart gyro_read_part = GYRO_READ_HIGH;
+volatile bool gyro_read_in_progress = false;
+volatile int16_t last_gyro_reading = 0;
 
 /*
  * 
@@ -65,6 +79,14 @@ int main(int argc, char** argv) {
     init_timers();
     //init_adc();
     init_pwm();
+    init_spi();
+    init_mpu();
+    enable_spi_interrupt();
+    
+    // Configure and enable external interrupt
+    OPTION_REGbits.INTEDG = 1;
+    INTCONbits.INTF = 0;
+    INTCONbits.INTE = 1;
     
     // Enable peripheral interrupts
     INTCONbits.PEIE = 1;
@@ -75,9 +97,8 @@ int main(int argc, char** argv) {
     //start_adc_conversion();
     
     while (1) {
-        // Have the LED driver output enable mirror the mode switch
-        //LATCbits.LATC0 = PORTBbits.RB2;
-        LATCbits.LATC0 = 1;
+        // Enable the LED driver
+        PWM_ENABLE = 1;
         
         if (adc_result_updated) {
             float new_hue = ((float)adc_result / 4096.0) * 360.0;
@@ -94,6 +115,16 @@ int main(int argc, char** argv) {
             CCP3CONbits.DC3B = pwm_out[2] & 0x03;
             
             adc_result_updated = false;
+        }
+        
+        if (new_gyro_samp_ready) {
+            if ((last_gyro_reading > GYRO_MOTION_THRESHOLD) || (last_gyro_reading < -GYRO_MOTION_THRESHOLD)) {
+                USER_LED = 1;
+            } else {
+                USER_LED = 0;
+            }
+            
+            new_gyro_samp_ready = false;
         }
     }
     
@@ -114,21 +145,25 @@ volatile unsigned int hue_test_counter = 0;
 void interrupt main_isr(void)
 {
     // Poll interrupt flag registers
-    if (INTCONbits.TMR0IF) { // Timer 0 overflow flag
+    
+    // Timer 0 interrupt
+    if (INTCONbits.TMR0IF) {
         
-        // Toggle user LED ever 1s)
+        // Toggle user LED ever 1s
+        /*
         if (++heartbeat_led_counter >= 122) {
             // Toggle the state of the user LED
             if (led_state) {
-                LATBbits.LATB1 = 1;
+                USER_LED = 1;
                 led_state = false;
             } else {
-                LATBbits.LATB1 = 0;
+                USER_LED = 0;
                 led_state = true;
             }
             
             heartbeat_led_counter = 0;
         }
+        */
         
         if (++hue_breathe_counter >= HUE_BREATHE_DELAY) {
             switch (current_hue_breathe_direction) {
@@ -200,6 +235,42 @@ void interrupt main_isr(void)
         
         // Reset the interrupt flag
         INTCONbits.TMR0IF = 0;
+    }
+    
+    // External Interrupt
+    if (INTCONbits.INTF) {
+        if (!gyro_read_in_progress) {
+            // If we're not in the middle of reading the gyro, start the read transaction
+            gyro_read_in_progress = true;
+            last_gyro_reading = 0;
+            gyro_read_part = GYRO_READ_HIGH;
+            assert_spi_cs();
+            read_gyro_z_high();
+        }
+        
+        // Reset the interrupt flag
+        INTCONbits.INTF = 0;
+    }
+    
+    // SPI Interrupt
+    if (PIR1bits.SSP1IF) {
+        switch (gyro_read_part) {
+        case GYRO_READ_HIGH:
+            last_gyro_reading |= ((int16_t)read_spi_byte() << 8);
+            gyro_read_part = GYRO_READ_LOW;
+            read_gyro_z_low();
+            break;
+
+        case GYRO_READ_LOW:
+            last_gyro_reading |= read_spi_byte();
+            deassert_spi_cs();
+            gyro_read_in_progress = false;
+            new_gyro_samp_ready = true;
+            break;
+        }
+        
+        // Reset the interrupt flag
+        PIR1bits.SSP1IF = 0;
     }
     
     /*

@@ -12,6 +12,7 @@
       <itemPath>pwm.h</itemPath>
       <itemPath>spi.h</itemPath>
       <itemPath>util.h</itemPath>
+      <itemPath>mpu6500.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
@@ -28,6 +29,7 @@
       <itemPath>pwm.c</itemPath>
       <itemPath>spi.c</itemPath>
       <itemPath>util.c</itemPath>
+      <itemPath>mpu6500.c</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"

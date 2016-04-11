@@ -12,21 +12,11 @@
 extern "C" {
 #endif
 
-static void send_byte(uint8_t byte_to_send);
-static uint8_t recv_byte();
-
+static bool spi_rx_tx_complete();
+    
 #ifdef __cplusplus
 }
 #endif
-
-#define INTERNAL_BUF_SIZE 10
-
-volatile bool transaction_in_progress = false;
-SPITransaction current_transaction;
-uint8_t current_send_buf[INTERNAL_BUF_SIZE];
-uint8_t current_recv_buf[INTERNAL_BUF_SIZE];
-int num_bytes_written = 0;
-int num_bytes_read = 0;
 
 void init_spi()
 {
@@ -37,10 +27,11 @@ void init_spi()
     APFCON2bits.SSSEL = 0; // ~SS is on RA5 (unused pin, since we're not using SPI in slave mode)
     
     // Init SPI line directions
-    TRISCbits.TRISC4 = 1; // MISO
-    TRISCbits.TRISC5 = 0; // MOSI
-    TRISCbits.TRISC3 = 0; // SCK
-    TRISCbits.TRISC7 = 0; // ~CS
+    SPI_MISO_DIRECTION = 1; // MISO input
+    SPI_MOSI_DIRECTION = 0; // MOSI output
+    SPI_SCK_DIRECTION = 0; // SCK output
+    SPI_CS_DIRECTION = 0; // ~CS output
+    SPI_CS = 1; // Set chip select inactive
     
     SSPCON1bits.CKP = 1; // Clock idles high
     SSPSTATbits.CKE = 0; // Transmit occurs on falling edge (slave samples on rising edge)
@@ -49,74 +40,77 @@ void init_spi()
     SSPADD = 15; // Fosc = 32MHz, SPI clock = 32MHz / (4 * (15 + 1)), SPI clock = 500kHz
     
     PIR1bits.SSP1IF = 0; // Clear the SPI interrupt flag
-    PIE1bits.SSP1IE = 1; // Enable the SPI interrupt
+    //PIE1bits.SSP1IE = 1; // Enable the SPI interrupt
     
     SSPCON1bits.SSPEN = 1; // Enable the SPI peripheral
 }
 
-bool start_spi_transaction(SPITransaction* transaction)
-{
-    if (is_transaction_in_progress()) {
-        return false;
-    }
+void perform_blocking_spi_transaction(BlockingSPITransaction* transaction)
+{   
+    // Dummy read to clear the buffer full flag
+    uint8_t dummy = SSPBUF;
     
-    // Copy the transaction to the internal transaction
-    memcpy(&current_transaction, transaction, sizeof(SPITransaction));
-    num_bytes_written = 0;
-    num_bytes_read = 0;
+    // Enable slave select
+    SPI_CS = 0;
     
-    // Copy the send and receive buffer contents to the internal send and receive buffers
-    memcpy(current_send_buf, transaction->send_buf, min(transaction->send_count, INTERNAL_BUF_SIZE));
-    memcpy(current_recv_buf, transaction->recv_buf, min(transaction->recv_count, INTERNAL_BUF_SIZE));
-    
-    if (transaction->send_count > 0) {
-        // Mark the transaction as having started
-        update_transaction_state(true);
-        // Start the transaction by sending the 1st byte
-        // This will cause an interrupt when it completes
-        send_byte(current_send_buf[num_bytes_written++]);
+    // Keep going until we've sent and received all requested data
+    int bytes_sent = 0;
+    int bytes_recvd = 0;
+    int send_count = transaction->send_count;
+    int recv_count = transaction->recv_count;
+    while ((send_count > 0) || (recv_count > 0)) {
+        if (send_count > 0) {
+            SSPBUF = transaction->send_buf[bytes_sent];
+            send_count--;
+        } else {
+            SSPBUF = 0;
+        }
+        bytes_sent++;
         
-        return true;
-    } else {
-        return false;
-    }
-}
-
-void update_transaction_state(bool in_progress)
-{
-    disable_global_interrupts();
-    transaction_in_progress = in_progress;
-    enable_global_interrupts();
-}
-
-bool is_transaction_in_progress()
-{
-    disable_global_interrupts();
-    bool result = transaction_in_progress;
-    enable_global_interrupts();
-    
-    return result;
-}
-
-void continue_transaction()
-{
-    if (num_bytes_read < current_transaction.recv_count) {
-        current_recv_buf[num_bytes_read++] = recv_byte();
-    }
-    
-    if (num_bytes_written < current_transaction.send_count) {
-        send_byte(current_send_buf[num_bytes_written++]);
-    } else {
+        while (!spi_rx_tx_complete())
+        {}
         
+        uint8_t recvd_byte = SSPBUF;
+        if (recv_count > 0) {
+            transaction->recv_buf[bytes_recvd] = recvd_byte;
+            recv_count--;
+        }
+        bytes_recvd++;
     }
+    
+    // Disable slave select
+    SPI_CS = 1;
+    
+    PIR1bits.SSP1IF = 0; // Clear the SPI interrupt flag
 }
 
-static void send_byte(uint8_t byte_to_send)
+void enable_spi_interrupt()
 {
-    SSP1BUF = byte_to_send;
+    PIR1bits.SSP1IF = 0; // Clear the SPI interrupt flag
+    PIE1bits.SSP1IE = 1; // Enable the SPI interrupt
 }
 
-static uint8_t recv_byte()
+void assert_spi_cs()
 {
-    return SSP1BUF;
+    SPI_CS = 0;
+}
+
+void deassert_spi_cs()
+{
+    SPI_CS = 1;
+}
+
+void send_spi_byte(uint8_t byte_to_send)
+{
+    SSPBUF = byte_to_send;
+}
+
+uint8_t read_spi_byte()
+{
+    return SSPBUF;
+}
+
+static bool spi_rx_tx_complete()
+{
+    return (SSPSTATbits.BF == 1);
 }
