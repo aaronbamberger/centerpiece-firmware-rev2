@@ -101,8 +101,7 @@ extern "C" {
 #endif
 
 void init_mpu();
-void read_gyro_z_high();
-void read_gyro_z_low();
+void start_read_gyro_z();
 
 #ifdef	__cplusplus
 }

@@ -1,7 +1,7 @@
 #include "mpu6500.h"
 #include "spi.h"
 
-#define _XTAL_FREQ 16000000
+#define _XTAL_FREQ 8000000
 
 #include <stdint.h>
 #include <string.h>
@@ -98,12 +98,7 @@ void init_mpu()
     return;
 }
 
-void read_gyro_z_high()
+void start_read_gyro_z()
 {
     send_spi_byte(GYRO_ZOUT_H_REG | REG_READ);
-}
-
-void read_gyro_z_low()
-{
-    send_spi_byte(GYRO_ZOUT_L_REG | REG_READ);
 }

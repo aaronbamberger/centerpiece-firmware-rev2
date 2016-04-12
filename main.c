@@ -35,7 +35,7 @@
 #define HUE_BREATHE_ADJ_MIN -10.0
 #define BREATHE_DELAY 3
 #define HUE_BREATHE_DELAY 5
-#define GYRO_MOTION_THRESHOLD 230
+#define GYRO_MOTION_THRESHOLD 5000
 
 typedef enum {
     BREATHE_STATE_SAT_DOWN,
@@ -50,6 +50,7 @@ typedef enum {
 } HueBreatheDirection;
 
 typedef enum {
+    GYRO_READ_START,
     GYRO_READ_HIGH,
     GYRO_READ_LOW
 } GyroReadPart;
@@ -62,7 +63,7 @@ volatile uint16_t adc_result;
 volatile bool adc_result_updated = false;
 volatile float hue_breathe_adjustment = 0.0;
 volatile bool new_gyro_samp_ready = false;
-volatile GyroReadPart gyro_read_part = GYRO_READ_HIGH;
+volatile GyroReadPart gyro_read_part = GYRO_READ_START;
 volatile bool gyro_read_in_progress = false;
 volatile int16_t last_gyro_reading = 0;
 
@@ -243,9 +244,10 @@ void interrupt main_isr(void)
             // If we're not in the middle of reading the gyro, start the read transaction
             gyro_read_in_progress = true;
             last_gyro_reading = 0;
-            gyro_read_part = GYRO_READ_HIGH;
+            gyro_read_part = GYRO_READ_START;
             assert_spi_cs();
-            read_gyro_z_high();
+            start_read_gyro_z();
+            //read_gyro_z_high();
         }
         
         // Reset the interrupt flag
@@ -255,10 +257,16 @@ void interrupt main_isr(void)
     // SPI Interrupt
     if (PIR1bits.SSP1IF) {
         switch (gyro_read_part) {
+        case GYRO_READ_START:
+            read_spi_byte(); // Dummy read to clear the buffer
+            gyro_read_part = GYRO_READ_HIGH;
+            send_spi_byte(0x00);
+            break;
+
         case GYRO_READ_HIGH:
             last_gyro_reading |= ((int16_t)read_spi_byte() << 8);
             gyro_read_part = GYRO_READ_LOW;
-            read_gyro_z_low();
+            send_spi_byte(0x00);
             break;
 
         case GYRO_READ_LOW:
