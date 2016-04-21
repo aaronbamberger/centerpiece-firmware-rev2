@@ -36,6 +36,7 @@
 #define BREATHE_DELAY 3
 #define HUE_BREATHE_DELAY 5
 #define GYRO_MOTION_THRESHOLD 5000
+#define ROTATION_HUE_ADJUST 0.01
 
 typedef enum {
     BREATHE_STATE_SAT_DOWN,
@@ -56,6 +57,7 @@ typedef enum {
 } GyroReadPart;
 
 volatile bool update_color_flag = false;
+float current_hue = 0.0;
 float hsv[] = {0.0, 1.0, 1.0};
 float rgb_out[] = {0.0, 0.0, 0.0};
 uint16_t pwm_out[] = {0, 0, 0};
@@ -66,6 +68,7 @@ volatile bool new_gyro_samp_ready = false;
 volatile GyroReadPart gyro_read_part = GYRO_READ_START;
 volatile bool gyro_read_in_progress = false;
 volatile int16_t last_gyro_reading = 0;
+volatile bool color_update_flag = false;
 
 /*
  * 
@@ -97,13 +100,37 @@ int main(int argc, char** argv) {
     // Start an ADC conversion to start the scan of pots
     //start_adc_conversion();
     
+    // Enable the LED driver
+    PWM_ENABLE = 1;
+    
     while (1) {
-        // Enable the LED driver
-        PWM_ENABLE = 1;
+        if (new_gyro_samp_ready) {
+            if (last_gyro_reading > GYRO_MOTION_THRESHOLD) {
+                current_hue += ROTATION_HUE_ADJUST;
+                if (current_hue >= 360.0) {
+                    current_hue = 0.0;
+                }
+            } else if (last_gyro_reading < -GYRO_MOTION_THRESHOLD) {
+                current_hue -= ROTATION_HUE_ADJUST;
+                if (current_hue < 0.0) {
+                    current_hue = 360.0;
+                }
+            }
+            
+            /*
+            if ((last_gyro_reading > GYRO_MOTION_THRESHOLD) || (last_gyro_reading < -GYRO_MOTION_THRESHOLD)) {
+                USER_LED = 1;
+            } else {
+                USER_LED = 0;
+            }
+            */
+            
+            new_gyro_samp_ready = false;
+        }
         
-        if (adc_result_updated) {
-            float new_hue = ((float)adc_result / 4096.0) * 360.0;
-            hsv[0] = new_hue + hue_breathe_adjustment;
+        if (color_update_flag) {
+            //float new_hue = ((float)adc_result / 4096.0) * 360.0;
+            hsv[0] = current_hue + hue_breathe_adjustment;
             
             hsv_to_rgb(hsv, rgb_out);
             rgb_to_pwm_output_scale(rgb_out, pwm_out);
@@ -115,17 +142,7 @@ int main(int argc, char** argv) {
             CCPR3L = (pwm_out[2] >> 2);
             CCP3CONbits.DC3B = pwm_out[2] & 0x03;
             
-            adc_result_updated = false;
-        }
-        
-        if (new_gyro_samp_ready) {
-            if ((last_gyro_reading > GYRO_MOTION_THRESHOLD) || (last_gyro_reading < -GYRO_MOTION_THRESHOLD)) {
-                USER_LED = 1;
-            } else {
-                USER_LED = 0;
-            }
-            
-            new_gyro_samp_ready = false;
+            color_update_flag = false;
         }
     }
     
@@ -223,7 +240,10 @@ void interrupt main_isr(void)
             breathe_counter = 0;
         }
         
+        color_update_flag = true;
+        
         // TODO: Just for testing until IMU is working
+        /*
         if (hue_test_counter++ > 2) {
             adc_result++;
             if (adc_result > 4096) {
@@ -233,6 +253,7 @@ void interrupt main_isr(void)
             
             adc_result_updated = true;
         }
+        */
         
         // Reset the interrupt flag
         INTCONbits.TMR0IF = 0;
