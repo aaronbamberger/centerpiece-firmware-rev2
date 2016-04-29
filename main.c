@@ -35,8 +35,8 @@
 #define HUE_BREATHE_ADJ_MIN -10.0
 #define BREATHE_DELAY 3
 #define HUE_BREATHE_DELAY 5
-#define GYRO_MOTION_THRESHOLD 5000
-#define ROTATION_HUE_ADJUST 0.01
+#define GYRO_MOTION_THRESHOLD 1000
+#define ROTATION_HUE_ADJUST 0.000005
 
 typedef enum {
     BREATHE_STATE_SAT_DOWN,
@@ -106,24 +106,24 @@ int main(int argc, char** argv) {
     while (1) {
         if (new_gyro_samp_ready) {
             if (last_gyro_reading > GYRO_MOTION_THRESHOLD) {
-                current_hue += ROTATION_HUE_ADJUST;
+                float hue_adjustment = ((float)last_gyro_reading - (float)GYRO_MOTION_THRESHOLD) * (float)ROTATION_HUE_ADJUST;
+                current_hue += hue_adjustment;
                 if (current_hue >= 360.0) {
                     current_hue = 0.0;
                 }
             } else if (last_gyro_reading < -GYRO_MOTION_THRESHOLD) {
-                current_hue -= ROTATION_HUE_ADJUST;
+                float hue_adjustment = ((float)last_gyro_reading + (float)GYRO_MOTION_THRESHOLD) * (float)ROTATION_HUE_ADJUST;
+                current_hue += hue_adjustment;
                 if (current_hue < 0.0) {
                     current_hue = 360.0;
                 }
             }
             
-            /*
             if ((last_gyro_reading > GYRO_MOTION_THRESHOLD) || (last_gyro_reading < -GYRO_MOTION_THRESHOLD)) {
                 USER_LED = 1;
             } else {
                 USER_LED = 0;
             }
-            */
             
             new_gyro_samp_ready = false;
         }
@@ -183,6 +183,7 @@ void interrupt main_isr(void)
         }
         */
         
+        /*
         if (++hue_breathe_counter >= HUE_BREATHE_DELAY) {
             switch (current_hue_breathe_direction) {
             case HUE_BREATHE_UP:
@@ -239,6 +240,7 @@ void interrupt main_isr(void)
             }
             breathe_counter = 0;
         }
+        */
         
         color_update_flag = true;
         
