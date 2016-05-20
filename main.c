@@ -6,6 +6,16 @@
  */
 
 #define _XTAL_FREQ 16000000
+#define INTERRUPTS_PER_SEC 122
+#define SECS_PER_MIN 60
+#define MINS_PER_HOUR 60
+
+#define ENABLE_HEARTBEAT_LED 0
+#define ENABLE_HUE_BREATHING 0
+#define ENABLE_SAT_BREATHING 0
+#define ENABLE_GYRO_MOTION_LED 0
+
+#define NO_IMU_MODE 1
 
 #include "proc_config.h"
 #include "rgb_hsv.h"
@@ -30,13 +40,21 @@
 #define SAT_MAX 1.0
 #define VAL_MIN 0.5
 #define VAL_MAX 1.0
-#define HUE_BREATHE_STEP 0.05;
-#define HUE_BREATHE_ADJ_MAX 10.0
-#define HUE_BREATHE_ADJ_MIN -10.0
+#define HUE_BREATHE_STEP 0.01;
+#define HUE_BREATHE_ADJ_MAX 5.0
+#define HUE_BREATHE_ADJ_MIN -5.0
 #define BREATHE_DELAY 3
-#define HUE_BREATHE_DELAY 5
+#define HUE_BREATHE_DELAY 1
 #define GYRO_MOTION_THRESHOLD 1000
 #define ROTATION_HUE_ADJUST 0.000005
+
+#if NO_IMU_MODE
+#define STARTING_HUE 320.0
+#define HUE_CHANGE_DELAY 150
+#define HUE_CHANGE_AMOUNT 0.005
+#else
+#define STARTING_HUE 0.0
+#endif
 
 typedef enum {
     BREATHE_STATE_SAT_DOWN,
@@ -57,7 +75,7 @@ typedef enum {
 } GyroReadPart;
 
 volatile bool update_color_flag = false;
-float current_hue = 0.0;
+float current_hue = STARTING_HUE;
 float hsv[] = {0.0, 1.0, 1.0};
 float rgb_out[] = {0.0, 0.0, 0.0};
 uint16_t pwm_out[] = {0, 0, 0};
@@ -68,7 +86,11 @@ volatile bool new_gyro_samp_ready = false;
 volatile GyroReadPart gyro_read_part = GYRO_READ_START;
 volatile bool gyro_read_in_progress = false;
 volatile int16_t last_gyro_reading = 0;
-volatile bool color_update_flag = false;
+volatile bool color_update_flag = true;
+volatile uint16_t uptime_ticks;
+volatile uint16_t uptime_seconds;
+volatile uint16_t uptime_minutes;
+volatile uint16_t uptime_hours;
 
 /*
  * 
@@ -97,13 +119,16 @@ int main(int argc, char** argv) {
     // Enable global interrupts
     enable_global_interrupts();
     
-    // Start an ADC conversion to start the scan of pots
-    //start_adc_conversion();
-    
     // Enable the LED driver
     PWM_ENABLE = 1;
     
+#if NO_IMU_MODE
+    int hue_change_counter = 0;
+    bool start_hue_change = false;
+#endif
+    
     while (1) {
+#if !NO_IMU_MODE
         if (new_gyro_samp_ready) {
             if (last_gyro_reading > GYRO_MOTION_THRESHOLD) {
                 float hue_adjustment = ((float)last_gyro_reading - (float)GYRO_MOTION_THRESHOLD) * (float)ROTATION_HUE_ADJUST;
@@ -119,14 +144,32 @@ int main(int argc, char** argv) {
                 }
             }
             
+#if ENABLE_GYRO_MOTION_LED
             if ((last_gyro_reading > GYRO_MOTION_THRESHOLD) || (last_gyro_reading < -GYRO_MOTION_THRESHOLD)) {
                 USER_LED = 1;
             } else {
                 USER_LED = 0;
             }
+#endif
             
             new_gyro_samp_ready = false;
         }
+#else
+        if (uptime_hours >= 3) {
+            start_hue_change = true;
+        }
+        
+        if (start_hue_change) {
+            if(++hue_change_counter >= HUE_CHANGE_DELAY) {
+                hue_change_counter = 0;
+                
+                current_hue += HUE_CHANGE_AMOUNT;
+                if (current_hue >= 360.0) {
+                    current_hue = 0.0;
+                }
+            }
+        }
+#endif
         
         if (color_update_flag) {
             //float new_hue = ((float)adc_result / 4096.0) * 360.0;
@@ -166,9 +209,22 @@ void interrupt main_isr(void)
     
     // Timer 0 interrupt
     if (INTCONbits.TMR0IF) {
+        // Manage the uptime counters
+        if (++uptime_ticks >= INTERRUPTS_PER_SEC) {
+            uptime_ticks = 0;
+            uptime_seconds++;
+            if (uptime_seconds >= SECS_PER_MIN) {
+                uptime_seconds = 0;
+                uptime_minutes++;
+                if (uptime_minutes >= MINS_PER_HOUR) {
+                    uptime_minutes = 0;
+                    uptime_hours++;
+                }
+            }
+        }
         
+#if ENABLE_HEARTBEAT_LED
         // Toggle user LED ever 1s
-        /*
         if (++heartbeat_led_counter >= 122) {
             // Toggle the state of the user LED
             if (led_state) {
@@ -181,9 +237,9 @@ void interrupt main_isr(void)
             
             heartbeat_led_counter = 0;
         }
-        */
-        
-        /*
+#endif
+
+#if ENABLE_HUE_BREATHING
         if (++hue_breathe_counter >= HUE_BREATHE_DELAY) {
             switch (current_hue_breathe_direction) {
             case HUE_BREATHE_UP:
@@ -203,7 +259,9 @@ void interrupt main_isr(void)
             
             hue_breathe_counter = 0;
         }
+#endif
         
+#if ENABLE_SAT_BREATHING
         if (++breathe_counter >= BREATHE_DELAY) {
             switch (current_breathe_state) {
             case BREATHE_STATE_SAT_DOWN:
@@ -240,7 +298,9 @@ void interrupt main_isr(void)
             }
             breathe_counter = 0;
         }
-        */
+#endif
+        
+        
         
         color_update_flag = true;
         
@@ -303,27 +363,6 @@ void interrupt main_isr(void)
         // Reset the interrupt flag
         PIR1bits.SSP1IF = 0;
     }
-    
-    /*
-    if (PIR1bits.ADIF) { // ADC conversion complete flag
-        // Read the adc
-        adc_result = (ADRESH << 8) | ADRESL;
-        
-        // Clamp ADC readings to 0
-        if (adc_result < 0) {
-            adc_result = 0;
-        }
-        
-        // Set a flag indicating which adc was updated
-        adc_result_updated = true;
-        
-        // Reset the interrupt flag
-        PIR1bits.ADIF = 0;
-        
-        // Schedule a new ADC conversion
-        start_adc_conversion();
-    }
-    */
     
     return;
 }
